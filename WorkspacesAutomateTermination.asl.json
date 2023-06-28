@@ -1,0 +1,132 @@
+{
+  "Comment": "A Step Function that processes a list of workspaces and identifies those with a connection time from the past 1 day",
+  "StartAt": "ProcessList",
+  "States": {
+    "ProcessList": {
+      "Type": "Map",
+      "ItemsPath": "$.workspaces",
+      "MaxConcurrency": 10,
+      "Iterator": {
+        "StartAt": "CheckConnectionTime",
+        "States": {
+          "CheckConnectionTime": {
+            "Type": "Task",
+            "Resource": "arn:aws:lambda:us-east-1:258498484861:function:getWorkspaceConnectionTime:$LATEST",
+            "InputPath": "$",
+            "OutputPath": "$",
+            "ResultPath": "$.workspace",
+            "Retry": [
+              {
+                "ErrorEquals": [
+                  "Lambda.FunctionError"
+                ],
+                "IntervalSeconds": 2,
+                "MaxAttempts": 3,
+                "BackoffRate": 2
+              }
+            ],
+            "Catch": [
+              {
+                "ErrorEquals": [
+                  "States.ALL"
+                ],
+                "Next": "HandleError"
+              }
+            ],
+            "Next": "CheckConnectionTimeResult"
+          },
+          "CheckConnectionTimeResult": {
+            "Type": "Choice",
+            "Choices": [
+              {
+                "Variable": "$.workspace.body",
+                "NumericLessThan": 100,
+                "Next": "ConnectionTimeWithin1Day"
+              }
+            ],
+            "Default": "ConnectionTimeGreaterThan1Day"
+          },
+          "ConnectionTimeWithin1Day": {
+            "Type": "Pass",
+            "Result": {
+              "workspaceId.$": "$.workspace.workspaceId",
+              "connectionTime.$": "$.workspace.connectionTime"
+            },
+            "Next": "CheckNextWorkspace"
+          },
+          "ConnectionTimeGreaterThan1Day": {
+            "Type": "Pass",
+            "Next": "SendEmailNotification"
+          },
+          "SendEmailNotification": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "arn:aws:lambda:us-east-1:258498484861:function:SendEmailNotificationLambdaFunction:$LATEST",
+              "Payload": {
+                "email": "curdarst@amazon.com",
+                "subject": "Workspaces with connection time greater than 1 day",
+                "message": "The following workspaces have not been accessed for more than 1 day."
+              }
+            },
+            "Next": "Wait 5 Minutes",
+            "ResultPath": null
+          },
+          "Wait 5 Minutes": {
+            "Type": "Wait",
+            "Seconds": 15,
+            "Next": "SendEmailNotificationFinal"
+          },
+          "SendEmailNotificationFinal": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "arn:aws:lambda:us-east-1:258498484861:function:SendEmailNotificationLambdaFunction:$LATEST",
+              "Payload": {
+                "email": "curdarst@amazon.com",
+                "subject": "Workspaces with connection time greater than 1 day",
+                "message": "The following workspaces have not been accessed for more than 1 day."
+              }
+            },
+            "Next": "TerminateWorkspaces",
+            "ResultPath": null
+          },
+          "TerminateWorkspaces": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "Payload.$": "$",
+              "FunctionName": "arn:aws:lambda:us-east-1:258498484861:function:terminateWorkspace:$LATEST"
+            },
+            "Retry": [
+              {
+                "ErrorEquals": [
+                  "Lambda.ServiceException",
+                  "Lambda.AWSLambdaException",
+                  "Lambda.SdkClientException",
+                  "Lambda.TooManyRequestsException"
+                ],
+                "IntervalSeconds": 2,
+                "MaxAttempts": 6,
+                "BackoffRate": 2
+              }
+            ],
+            "End": true,
+            "InputPath": "$",
+            "ResultPath": "$.workspace",
+            "OutputPath": "$"
+          },
+          "HandleError": {
+            "Type": "Pass",
+            "End": true
+          },
+          "CheckNextWorkspace": {
+            "Type": "Pass",
+            "End": true
+          }
+        }
+      },
+      "End": true
+    }
+  }
+}
